@@ -32,7 +32,7 @@ public:
     int wrtIdx;
     atomic_int* nwrtIdx;
     atomic_int *pp;//数据区首地址，*pp==99表明已经成功获得共享内存
-    atomic_int **lock;//图片状态标志位 0：已读 1：正在读取 2：正在写入 3：写入完毕待读取
+    std::atomic<LockStatus>** lock;//图片状态标志位 0：已读 1：正在读取 2：正在写入 3：写入完毕待读取
     unsigned char *databegin;//数据区开始位置
     unsigned char **shmdata;//共享内存数据块
 
@@ -81,7 +81,7 @@ ShareMemWrt::ShareMemWrt(int shmkey)
         return;
     }
     shmdata=new unsigned char*[imgNum];//指针数据
-    lock=new atomic_int*[imgNum];
+    lock=new std::atomic<LockStatus>* [imgNum];
     pp = (atomic_int*)p;// 共享内存对象映射
 
     //声明共享内存已经创建成功
@@ -93,8 +93,8 @@ ShareMemWrt::ShareMemWrt(int shmkey)
     //每张图片的锁初始化为0
     for(int i=0;i<imgNum;i++)
     {
-        lock[i]=pp+i+infoLen;
-        *lock[i]=0;
+        lock[i]->store(static_cast<std::atomic<LockStatus>*>(pp+i+infoLen));
+        *lock[i] = 0;
     }
     
     databegin=(unsigned char*)(pp+infoLen+imgNum);
@@ -116,21 +116,22 @@ void ShareMemWrt::updateWrtLock()
 // 内存要求函数，成功则返回可写内存块指针，失败返回Null
 unsigned char* ShareMemWrt::requiredata()
 {
+    //先找有无已经读完的
     for(int i=0;i<imgNum;i++)
     {
-        if(*lock[i]==readed)
+        if(lock[i]->compare_exchange_strong(LockStatus::readed,LockStatus::writing))
         {
             wrtIdx=i;
-            *lock[wrtIdx]=writing;
             return shmdata[i];
         }
     }
+
+    //再找有无写完但没在读的
     for(int i=0;i<imgNum;i++)
     {
-        if(*lock[i]==written)
+        if(lock[i]->compare_exchange_strong(LockStatus::written,LockStatus::writing))
         {
             wrtIdx=i;
-            *lock[wrtIdx]=writing;
             return shmdata[i];
         }
     }
@@ -240,10 +241,9 @@ unsigned char* ShareMemRed::getdataforread()
 {
     while(true)
     {
-        if(*lock[*nwrtIdx]==written)
+        if(lock[*nwrtIdx]->compare_exchange_strong(written, reading))
         {
             redIdx=*nwrtIdx;
-            *lock[redIdx]=reading;
             return shmdata[*nwrtIdx];
         }
     }
@@ -268,4 +268,4 @@ ShareMemRed::~ShareMemRed()
     delete []lock;
 }
 
-#endif
+ #endif
