@@ -1,0 +1,4 @@
+/home/catmulti7/ShareMemory/build/CMakeFiles/rebuild_cache.dir
+/home/catmulti7/ShareMemory/build/CMakeFiles/edit_cache.dir
+/home/catmulti7/ShareMemory/build/CMakeFiles/read.dir
+/home/catmulti7/ShareMemory/build/CMakeFiles/write.dir
