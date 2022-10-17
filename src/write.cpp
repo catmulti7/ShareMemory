@@ -28,8 +28,11 @@ int main()
         cap>>img;
         resize(img,img,Size(640,480));
         p=write.requiredata();
-        memcpy(p,img.data,640*480*3);
-        write.updateWrtLock();
+        if(p!=nullptr)
+        {
+            memcpy(p,img.data,640*480*3);
+            write.updateWrtLock();
+        }
         //sleep(1);
 
     }

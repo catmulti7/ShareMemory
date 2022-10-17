@@ -11,10 +11,14 @@ int main()
     {
         p=read.getdataforread();
         //memcpy(img.data,p,640*480*3);
-        img.data=p;
-        imshow("read",img);
-        waitKey(1);
-        read.updateRedLock();
+        if(p!=nullptr)
+        {
+            memcpy(img.data,p,640*480*3);
+            imshow("read",img);
+            waitKey(1);
+            read.updateRedLock();
+        }
+        
 
     }
 }

@@ -14,37 +14,30 @@ const int infoLen=2;
 
 using namespace std;
 
-enum LockStatus
-{
-    readed, 
-    reading,
-    writing,
-    written
-};
+//enum LockStatus
+//{
+//    readed,
+//    reading,
+//    writing,
+//    written
+//};
 
-// int readed_ = readed;
-// int reading_ = reading;
-// int writing_ = writing;
-// int written_ = written;
-
-int readed_ = 0;
-int reading_ = 1;
-int writing_ = 2;
-int written_ = 3;
-
+int readed_=0;
+int reading_=1;
+int writing_=2;
+int written_=3;
 
 class ShareMemWrt
 {
 public:
-
-    int shmid;//共享内存ID
-    void *p;//共享内存首地址
-    int imgNum;
-    int imgRows, imgCols;
+    int shmid;//share memory id
+    void* p;
+    int imgNum; //number of data blocks
+    int imgRows, imgCols; //used to calc size of data blocks
     int wrtIdx;
     atomic_int* nwrtIdx;
     atomic_int *pp;//数据区首地址，*pp==99表明已经成功获得共享内存
-    atomic_int** lock;//图片状态标志位 0：已读 1：正在读取 2：正在写入 3：写入完毕待读取
+    atomic_int **lock;//图片状态标志位 0：已读 1：正在读取 2：正在写入 3：写入完毕待读取
     unsigned char *databegin;//数据区开始位置
     unsigned char **shmdata;//共享内存数据块
 
@@ -76,7 +69,7 @@ ShareMemWrt::ShareMemWrt(int shmkey)
     int dataLen=imgRows*imgCols*3;
 
     // 生成一个key
-    key_t key = ftok("~", shmkey);
+    key_t key = ftok("./../..", shmkey);
     // 创建共享内存，返回一个id
     // 第二个参数为共享内存大小，前面四个值分别记录共享内存循环队列的块大小，总块数，写指针索引,读指针索引与退出标志
     shmid = shmget(key, sizeof(atomic_int)*(infoLen+imgNum)+dataLen*imgNum, IPC_CREAT|0666);//0666是文件权限，不写只有超级用户才能打开
@@ -93,7 +86,7 @@ ShareMemWrt::ShareMemWrt(int shmkey)
         return;
     }
     shmdata=new unsigned char*[imgNum];//指针数据
-    lock=new atomic_int* [imgNum];
+    lock=new atomic_int*[imgNum];
     pp = (atomic_int*)p;// 共享内存对象映射
 
     //声明共享内存已经创建成功
@@ -105,8 +98,8 @@ ShareMemWrt::ShareMemWrt(int shmkey)
     //每张图片的锁初始化为0
     for(int i=0;i<imgNum;i++)
     {
-        lock[i] = pp+i+infoLen;
-        *lock[i] = 0;
+        lock[i]=pp+i+infoLen;
+        *lock[i]=readed_;
     }
     
     databegin=(unsigned char*)(pp+infoLen+imgNum);
@@ -120,32 +113,35 @@ ShareMemWrt::ShareMemWrt(int shmkey)
 void ShareMemWrt::updateWrtLock()
 {
     //解锁
-    *lock[wrtIdx]=written;
+    *lock[wrtIdx] = written_;
     *nwrtIdx=wrtIdx;
-    return;
 }
  
 // 内存要求函数，成功则返回可写内存块指针，失败返回Null
 unsigned char* ShareMemWrt::requiredata()
 {
-
-    //先找有无已经读完的
     for(int i=0;i<imgNum;i++)
     {
-        if(lock[i]->compare_exchange_strong(readed_,writing_))
+        if(lock[i]->compare_exchange_strong(readed_, writing_))
         {
             wrtIdx=i;
             return shmdata[i];
         }
+        else
+        {
+            readed_ = 0;
+        }
     }
-
-    //再找有无写完但没在读的
     for(int i=0;i<imgNum;i++)
     {
-        if(lock[i]->compare_exchange_strong(written_,writing_))
+        if(lock[i]->compare_exchange_strong(written_, writing_))
         {
             wrtIdx=i;
             return shmdata[i];
+        }
+        else
+        {
+            written_ = 3;
         }
     }
     return nullptr;
@@ -165,8 +161,19 @@ ShareMemWrt::~ShareMemWrt()
         exit(4);
     }
     // 销毁开辟内存
-    delete []shmdata;
-    delete []lock;
+    if(shmdata != nullptr)
+    {
+        delete []shmdata;
+        shmdata = nullptr;
+        for(int i=0;i<imgNum;i++)
+        {
+            delete lock[i];
+            lock[i] = nullptr;
+        }
+        delete []lock;
+        lock = nullptr;
+    }
+
 }
 
 
@@ -217,7 +224,7 @@ ShareMemRed::ShareMemRed(int shmkey)
     int dataLen=imgRows*imgCols*9;
 
     // 生成一个key
-    key_t key = ftok("~", shmkey);
+    key_t key = ftok("./../..", shmkey);
     // 创建共享内存，返回一个id
     // 第二个参数为共享内存大小，前面四个值分别记录共享内存循环队列的块大小，总块数，写指针索引,读指针索引与退出标志
     shmid = shmget(key, 0, 0);//0666是文件权限，不写只有超级用户才能打开
@@ -259,13 +266,17 @@ unsigned char* ShareMemRed::getdataforread()
             redIdx=*nwrtIdx;
             return shmdata[*nwrtIdx];
         }
+        else
+        {
+            written_ = 3;
+        }
     }
     return nullptr;
 }
 
 void ShareMemRed::updateRedLock()
 {
-    *lock[redIdx]=readed;
+    *lock[redIdx]=readed_;
 }
 
 ShareMemRed::~ShareMemRed()
@@ -277,8 +288,18 @@ ShareMemRed::~ShareMemRed()
         exit(3);
     }
     // 销毁开辟内存
-    delete []shmdata;
-    delete []lock;
+    if(shmdata != nullptr)
+    {
+        delete []shmdata;
+        shmdata = nullptr;
+        for(int i=0;i<imgNum;i++)
+        {
+            delete lock[i];
+            lock[i] = nullptr;
+        }
+        delete []lock;
+        lock = nullptr;
+    }
 }
 
- #endif
+#endif
